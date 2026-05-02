@@ -1618,7 +1618,7 @@ function renderDebts() {
     const renderLoanItem = (l, showPaid) => {
       const dOpts = {month:'short',day:'numeric',year:'numeric'};
       const dateLabel = new Date(l.dateKey+'T00:00:00').toLocaleDateString('en',dOpts);
-      return `<div class="debt-item" style="${showPaid?'opacity:0.5':''}">
+      return `<div class="debt-item" style="${showPaid?'opacity:0.6':''}">
         <div class="debt-header">
           <div>
             <div class="debt-name">${l.person||'Unknown'}</div>
@@ -1626,13 +1626,17 @@ function renderDebts() {
           </div>
           <div style="text-align:right">
             <div class="debt-amt loan">৳${fmt(l.amount)}</div>
-            <div style="margin-top:3px">${l.countLoan?'<span class="debt-tag loan">Counted</span>':''}${showPaid?'<span class="debt-tag" style="background:rgba(0,212,170,0.1);color:#00a888">Paid</span>':''}</div>
+            <div style="margin-top:3px;display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap">
+              ${l.countLoan?'<span class="debt-tag loan">Counted</span>':''}
+              ${showPaid?'<span class="debt-tag" style="background:rgba(0,212,170,0.1);color:#00a888">✓ Paid</span>':''}
+            </div>
           </div>
         </div>
-        ${!showPaid?`<div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn btn-outline" style="flex:1;font-size:12px;padding:6px 10px" onclick="markLoanPaid('${l.dateKey}',${l.idx})">✓ Mark Paid</button>
-          <button onclick="openEditModal('${l.dateKey}','loan',${l.idx})" style="padding:6px 12px;border:1.5px solid var(--border);border-radius:8px;background:transparent;font-size:12px;font-weight:600;cursor:pointer;color:var(--text2);font-family:'DM Sans',sans-serif">Edit</button>
-        </div>`:''}
+        <div style="display:flex;gap:8px;margin-top:8px">
+          ${!showPaid?`<button class="btn btn-outline" style="flex:1;font-size:12px;padding:6px 10px" onclick="markLoanPaid('${l.dateKey}',${l.idx})">✓ Mark Paid</button>`
+          :`<button style="flex:1;padding:6px 10px;border:1.5px solid rgba(0,212,170,0.3);border-radius:8px;background:rgba(0,212,170,0.06);font-size:12px;font-weight:600;cursor:pointer;color:#00a888;font-family:'DM Sans',sans-serif" onclick="unmarkLoanPaid('${l.dateKey}',${l.idx})">↩ Un-mark Paid</button>`}
+          <button onclick="openEditModal('${l.dateKey}','loan',${l.idx})" style="padding:6px 14px;border:1.5px solid var(--border);border-radius:8px;background:transparent;font-size:12px;font-weight:600;cursor:pointer;color:var(--text2);font-family:'DM Sans',sans-serif">Edit</button>
+        </div>
       </div>`;
     };
     let html = activeLoans.map(l=>renderLoanItem(l,false)).join('');
@@ -1653,7 +1657,7 @@ function renderDebts() {
     const renderLendItem = (l, showRet) => {
       const dOpts = {month:'short',day:'numeric',year:'numeric'};
       const dateLabel = new Date(l.dateKey+'T00:00:00').toLocaleDateString('en',dOpts);
-      return `<div class="debt-item" style="${showRet?'opacity:0.5':''}">
+      return `<div class="debt-item" style="${showRet?'opacity:0.6':''}">
         <div class="debt-header">
           <div>
             <div class="debt-name">${l.person||'Unknown'}</div>
@@ -1661,13 +1665,15 @@ function renderDebts() {
           </div>
           <div style="text-align:right">
             <div class="debt-amt borrow">৳${fmt(l.amount)}</div>
-            ${showRet?'<span class="debt-tag borrow" style="margin-top:3px;display:inline-block">Returned</span>':''}
+            ${showRet?'<span class="debt-tag borrow" style="margin-top:3px;display:inline-block">✓ Returned</span>':''}
           </div>
         </div>
-        ${!showRet?`<div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn btn-success" style="flex:1;font-size:12px;padding:6px 10px" onclick="markLendReturned('${l.dateKey}',${l.idx})">✓ Mark Returned</button>
-          <button onclick="openEditModal('${l.dateKey}','lend',${l.idx})" style="padding:6px 12px;border:1.5px solid var(--border);border-radius:8px;background:transparent;font-size:12px;font-weight:600;cursor:pointer;color:var(--text2);font-family:'DM Sans',sans-serif">Edit</button>
-        </div>`:''}
+        <div style="display:flex;gap:8px;margin-top:8px">
+          ${!showRet
+            ? `<button class="btn btn-success" style="flex:1;font-size:12px;padding:6px 10px" onclick="markLendReturned('${l.dateKey}',${l.idx})">✓ Mark Returned</button>`
+            : `<button style="flex:1;padding:6px 10px;border:1.5px solid rgba(233,69,96,0.3);border-radius:8px;background:rgba(233,69,96,0.06);font-size:12px;font-weight:600;cursor:pointer;color:var(--accent);font-family:'DM Sans',sans-serif" onclick="unmarkLendReturned('${l.dateKey}',${l.idx})">↩ Un-mark Returned</button>`}
+          <button onclick="openEditModal('${l.dateKey}','lend',${l.idx})" style="padding:6px 14px;border:1.5px solid var(--border);border-radius:8px;background:transparent;font-size:12px;font-weight:600;cursor:pointer;color:var(--text2);font-family:'DM Sans',sans-serif">Edit</button>
+        </div>
       </div>`;
     };
     let html = activeLends.map(l=>renderLendItem(l,false)).join('');
@@ -1712,6 +1718,26 @@ function markLendReturned(dateKey, idx) {
     saveData(data);
     renderDebts();
     showToast('Lend marked as returned! ✓');
+  }
+}
+
+function unmarkLoanPaid(dateKey, idx) {
+  const data = loadData();
+  if(data[dateKey]?.loan?.[idx]) {
+    data[dateKey].loan[idx].paid = false;
+    saveData(data);
+    renderDebts();
+    showToast('Loan un-marked — active again');
+  }
+}
+
+function unmarkLendReturned(dateKey, idx) {
+  const data = loadData();
+  if(data[dateKey]?.lend?.[idx]) {
+    data[dateKey].lend[idx].returned = false;
+    saveData(data);
+    renderDebts();
+    showToast('Lend un-marked — active again');
   }
 }
 
