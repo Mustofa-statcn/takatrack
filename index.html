@@ -1690,25 +1690,34 @@ function renderDebts() {
 
 function markLoanPaid(dateKey, idx) {
   const data = loadData();
-  if(data[dateKey]?.loan?.[idx]) {
-    const loan = data[dateKey].loan[idx];
-    loan.paid = true;
-    // Add as expense on today's date
-    const tk = todayKey();
-    if(!data[tk]) data[tk] = {};
-    if(!data[tk].extra) data[tk].extra = [];
-    data[tk].extra.push({
-      amount: loan.amount,
-      person: `Loan paid to: ${loan.person||'Unknown'}`,
-      note: `Loan repayment (original: ${dateKey})`,
-      currency: 'BDT',
-      ts: Date.now()
-    });
-    saveData(data);
-    renderDebts();
-    renderToday();
-    showToast('Loan paid — added to today\'s expenses ✓');
-  }
+  const loan = data[dateKey]?.loan?.[idx];
+  if(!loan) return;
+
+  // Guard: already paid — prevent double-adding expense
+  if(loan.paid) { showToast('Already marked as paid'); return; }
+
+  const tk = todayKey();
+  if(!data[tk]) data[tk] = {};
+  if(!data[tk].extra) data[tk].extra = [];
+
+  const expenseRef = Date.now();
+  data[tk].extra.push({
+    amount: loan.amount,
+    person: `Loan paid: ${loan.person||'Unknown'}`,
+    note: `Loan repayment (original: ${dateKey})`,
+    currency: 'BDT',
+    ts: expenseRef,
+    loanRef: true
+  });
+
+  loan.paid = true;
+  loan.paidExpenseRef = expenseRef;
+  loan.paidOnDate = tk;
+
+  saveData(data);
+  renderDebts();
+  renderToday();
+  showToast("Loan paid — added to today's expenses ✓");
 }
 
 function markLendReturned(dateKey, idx) {
@@ -1723,14 +1732,30 @@ function markLendReturned(dateKey, idx) {
 
 function unmarkLoanPaid(dateKey, idx) {
   const data = loadData();
-  if(data[dateKey]?.loan?.[idx]) {
-    data[dateKey].loan[idx].paid = false;
-    saveData(data);
-    renderDebts();
+  const loan = data[dateKey]?.loan?.[idx];
+  if(!loan) return;
+
+  // Remove the linked expense if we have a reference to it
+  if(loan.paidExpenseRef && loan.paidOnDate && data[loan.paidOnDate]?.extra) {
+    const before = data[loan.paidOnDate].extra.length;
+    data[loan.paidOnDate].extra = data[loan.paidOnDate].extra.filter(
+      e => e.ts !== loan.paidExpenseRef
+    );
+    const removed = before - data[loan.paidOnDate].extra.length;
+    if(removed > 0) showToast('Loan un-marked — expense removed ✓');
+    else showToast('Loan un-marked (expense already deleted)');
+  } else {
     showToast('Loan un-marked — active again');
   }
-}
 
+  loan.paid = false;
+  delete loan.paidExpenseRef;
+  delete loan.paidOnDate;
+
+  saveData(data);
+  renderDebts();
+  renderToday();
+}
 function unmarkLendReturned(dateKey, idx) {
   const data = loadData();
   if(data[dateKey]?.lend?.[idx]) {
@@ -1991,12 +2016,45 @@ function saveEdit() {
   if(document.getElementById('em-currency')) e.currency = document.getElementById('em-currency').value;
   if(document.getElementById('em-countLoan')) e.countLoan = document.getElementById('em-countLoan').classList.contains('checked');
   if(document.getElementById('em-returned')) e.returned = document.getElementById('em-returned').classList.contains('checked');
-  if(document.getElementById('em-paid')) e.paid = document.getElementById('em-paid').classList.contains('checked');
+
+  // Handle paid toggle — add or remove linked expense
+  if(document.getElementById('em-paid')) {
+    const newPaid = document.getElementById('em-paid').classList.contains('checked');
+    const wasPaid = e.paid || false;
+    if(newPaid && !wasPaid) {
+      // Marking as paid now — add expense entry
+      const tk = todayKey();
+      if(!data[tk]) data[tk] = {};
+      if(!data[tk].extra) data[tk].extra = [];
+      const expenseRef = Date.now();
+      data[tk].extra.push({
+        amount: amount,
+        person: `Loan paid: ${e.person||'Unknown'}`,
+        note: `Loan repayment (original: ${key})`,
+        currency: 'BDT',
+        ts: expenseRef,
+        loanRef: true
+      });
+      e.paid = true;
+      e.paidExpenseRef = expenseRef;
+      e.paidOnDate = tk;
+    } else if(!newPaid && wasPaid) {
+      // Un-marking — remove the linked expense
+      if(e.paidExpenseRef && e.paidOnDate && data[e.paidOnDate]?.extra) {
+        data[e.paidOnDate].extra = data[e.paidOnDate].extra.filter(ex => ex.ts !== e.paidExpenseRef);
+      }
+      e.paid = false;
+      delete e.paidExpenseRef;
+      delete e.paidOnDate;
+    }
+    // If same state, do nothing
+  }
 
   saveData(data);
   closeEditModal();
   showToast('Entry updated ✓');
   renderAllTodayEntries();
+  renderDebts();
   renderToday();
 }
 
