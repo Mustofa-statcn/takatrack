@@ -507,16 +507,20 @@
     <div class="modal-handle"></div>
     <div class="eom-emoji">🎉</div>
     <div class="eom-title">Budget Left Over!</div>
-    <div class="eom-sub" id="eomSurplusSub">Great job! You have leftover budget this month. Move it to savings?</div>
-    <div class="field">
-      <label>Move to account</label>
-      <select id="eomSurplusAccount"></select>
-    </div>
+    <div class="eom-sub" id="eomSurplusSub">Great job! You have leftover budget this month.</div>
     <div style="padding:12px;background:var(--surface3);border-radius:10px;font-size:13px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between"><span>Surplus amount</span><strong style="color:var(--accent3)">৳<span id="eomSurplusAmt">0</span></strong></div>
     </div>
-    <button class="btn btn-success btn-full" onclick="confirmSurplusDeposit()">Move to Savings 💰</button>
-    <button class="btn btn-outline btn-full" style="margin-top:8px" onclick="closeEomModals()">Skip for now</button>
+    <div id="eomSurplusOptions">
+      <div class="field">
+        <label>Move to savings account</label>
+        <select id="eomSurplusAccount"></select>
+      </div>
+      <button class="btn btn-success btn-full" onclick="confirmSurplusDeposit()">Move to Savings 💰</button>
+      <div style="text-align:center;margin:10px 0;font-size:12px;color:var(--text3)">— or —</div>
+      <button class="btn btn-secondary btn-full" onclick="keepSurplusForNextMonth()">Keep as Next Month's Extra Budget</button>
+    </div>
+    <button class="btn btn-outline btn-full" style="margin-top:8px;font-size:12px" onclick="remindLater()">Remind me tomorrow</button>
   </div>
 </div>
 
@@ -798,6 +802,39 @@
   </div>
 </div>
 
+<!-- PAGE: ANALYTICS -->
+<div class="page" id="page-analytics">
+  <div class="section-title">Analytics</div>
+
+  <!-- Monthly Budget Summary -->
+  <div class="card" id="savingsCard">
+    <div class="card-title">Monthly Overview</div>
+    <div id="savingsSection"></div>
+  </div>
+
+  <!-- Where You Spend Most -->
+  <div class="card">
+    <div class="card-title">Where You Spend Most</div>
+    <div id="spendRanks"></div>
+  </div>
+
+  <!-- Month Comparison -->
+  <div class="card">
+    <div class="card-title">6-Month Comparison</div>
+    <div style="position:relative;width:100%;height:200px">
+      <canvas id="monthChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Category Breakdown -->
+  <div class="card">
+    <div class="card-title">Category Breakdown (This Month)</div>
+    <div style="position:relative;width:100%;height:220px">
+      <canvas id="catChart"></canvas>
+    </div>
+  </div>
+</div>
+
 <!-- PAGE: PLANNING -->
 <div class="page" id="page-plan">
   <div class="section-title">Future Planning</div>
@@ -874,6 +911,11 @@
   <button onclick="showPage('plan',this)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
     Goals
+    <div class="nav-dot"></div>
+  </button>
+  <button onclick="showPage('analytics',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    Stats
     <div class="nav-dot"></div>
   </button>
 </nav>
@@ -1095,10 +1137,13 @@ function renderToday() {
   const allKeys = Object.keys(data);
   document.getElementById('usd-total').textContent = fmtD(getUSDTotal(data, allKeys));
 
-  // Pocket money reminder box
   const settings = loadSettings();
   const monthKey = `${now.getFullYear()}-${now.getMonth()}`;
-  const pocketAmt = settings.pocketMoney?.[monthKey];
+  const pocketBase = settings.pocketMoney?.[monthKey] || 0;
+  // Add earning-to-budget contributions and carry-over bonuses
+  const earnBonus = settings.budgetEarnings?.[monthKey] || 0;
+  const carryBonus = settings.budgetBonus?.[monthKey] || 0;
+  const pocketAmt = pocketBase + earnBonus + carryBonus;
   const prBox = document.getElementById('pocketReminderBox');
   if(pocketAmt) {
     const spent = getPeriodTotal(data, mk);
@@ -1211,10 +1256,19 @@ function renderAddPage() {
 function renderEarningForm() {
   const area = document.getElementById('earningFormArea');
   if(!area) return;
+  const banks = loadBanks();
+  const bankOpts = banks.map((b,i)=>`<option value="bank:${i}">→ ${b.bank} (Savings)</option>`).join('');
   area.innerHTML = `<div class="card">
     <div class="card-title">Add Earning / Income</div>
     <div class="field"><label>Source</label><input type="text" id="earn-source" placeholder="e.g. Salary, Freelance, Gift"></div>
     <div class="field"><label>Amount (৳ Taka)</label><input type="number" id="earn-amount" placeholder="0.00" inputmode="decimal"></div>
+    <div class="field">
+      <label>Add to</label>
+      <select id="earn-dest">
+        <option value="budget">📅 Monthly Budget (default)</option>
+        ${bankOpts}
+      </select>
+    </div>
     <div class="field"><label>Notes</label><textarea id="earn-note" placeholder="Any details..."></textarea></div>
     <button class="btn btn-success btn-full" onclick="saveEarning()">Add Earning</button>
   </div>`;
@@ -1224,18 +1278,101 @@ function saveEarning() {
   const key = dateKey(selectedDate);
   const amount = parseFloat(document.getElementById('earn-amount')?.value);
   if(!amount||amount<=0) { showToast('Enter a valid amount'); return; }
+  const source = document.getElementById('earn-source')?.value||'Income';
+  const dest = document.getElementById('earn-dest')?.value||'budget';
+  const note = document.getElementById('earn-note')?.value||'';
+
   const data = loadData();
   if(!data[key]) data[key] = {};
   if(!data[key].earnings) data[key].earnings = [];
-  data[key].earnings.push({
-    amount, source: document.getElementById('earn-source')?.value||'Income',
-    note: document.getElementById('earn-note')?.value||'', ts: Date.now()
-  });
+  data[key].earnings.push({ amount, source, note, dest, ts: Date.now() });
   saveData(data);
+
+  // If directed to savings account, deposit there
+  if(dest.startsWith('bank:')) {
+    const bankIdx = parseInt(dest.split(':')[1]);
+    const banks = loadBanks();
+    if(banks[bankIdx]) {
+      banks[bankIdx].balance = Number(banks[bankIdx].balance||0) + amount;
+      saveBanks(banks);
+      const hist = loadSavingsHistory();
+      hist.push({ amount, bank: banks[bankIdx].bank, note: `Earning: ${source}`, ts: Date.now() });
+      saveSavingsHistory(hist);
+      showToast(`৳${fmt(amount)} added to ${banks[bankIdx].bank} 🏦`);
+    }
+  } else {
+    // Add to budget — store as negative expense offset
+    const settings = loadSettings();
+    const now = today();
+    const mKey = `${now.getFullYear()}-${now.getMonth()}`;
+    if(!settings.budgetEarnings) settings.budgetEarnings = {};
+    if(!settings.budgetEarnings[mKey]) settings.budgetEarnings[mKey] = 0;
+    settings.budgetEarnings[mKey] += amount;
+    saveSettings(settings);
+    showToast(`৳${fmt(amount)} added to budget! 💰`);
+  }
+
   document.getElementById('earn-amount').value='';
   document.getElementById('earn-source').value='';
   document.getElementById('earn-note').value='';
-  showToast('Earning saved! 💰');
+  renderEarningForm();
+  renderAllTodayEntries();
+  renderToday();
+}
+
+function openEditEarning(key, idx) {
+  const data = loadData();
+  const e = data[key]?.earnings?.[idx];
+  if(!e) return;
+  const banks = loadBanks();
+  const bankOpts = banks.map((b,i)=>`<option value="bank:${i}"${e.dest===`bank:${i}`?' selected':''}>→ ${b.bank} (Savings)</option>`).join('');
+
+  document.getElementById('editModalTitle').textContent = 'Edit Earning';
+  document.getElementById('editModalBody').innerHTML = `
+    <div class="field"><label>Source</label><input type="text" id="em-source" value="${e.source||''}"></div>
+    <div class="field"><label>Amount (৳)</label><input type="number" id="em-amount" value="${e.amount}" inputmode="decimal"></div>
+    <div class="field"><label>Destination</label>
+      <select id="em-dest">
+        <option value="budget"${e.dest==='budget'||!e.dest?' selected':''}>📅 Monthly Budget</option>
+        ${bankOpts}
+      </select>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="em-note">${e.note||''}</textarea></div>`;
+
+  editCtx = { key, catId: 'earnings', idx };
+  document.getElementById('editModal').classList.remove('hidden');
+}
+
+function saveEditEarning() {
+  const { key, idx } = editCtx;
+  const data = loadData();
+  const e = data[key]?.earnings?.[idx];
+  if(!e) return;
+  const newAmt = parseFloat(document.getElementById('em-amount')?.value);
+  if(!newAmt||newAmt<=0) { showToast('Invalid amount'); return; }
+
+  // Reverse old deposit if it went to a bank
+  if(e.dest?.startsWith('bank:')) {
+    const oldIdx = parseInt(e.dest.split(':')[1]);
+    const banks = loadBanks();
+    if(banks[oldIdx]) { banks[oldIdx].balance = Math.max(0, Number(banks[oldIdx].balance||0) - e.amount); saveBanks(banks); }
+  }
+
+  e.amount = newAmt;
+  e.source = document.getElementById('em-source')?.value||e.source;
+  e.note = document.getElementById('em-note')?.value||'';
+  e.dest = document.getElementById('em-dest')?.value||'budget';
+
+  // Apply new deposit
+  if(e.dest.startsWith('bank:')) {
+    const newBankIdx = parseInt(e.dest.split(':')[1]);
+    const banks = loadBanks();
+    if(banks[newBankIdx]) { banks[newBankIdx].balance = Number(banks[newBankIdx].balance||0) + newAmt; saveBanks(banks); }
+  }
+
+  saveData(data);
+  closeEditModal();
+  showToast('Earning updated ✓');
   renderAllTodayEntries();
   renderToday();
 }
@@ -1273,14 +1410,16 @@ function renderAllTodayEntries() {
   // Earnings
   (day.earnings||[]).forEach((e,i) => {
     hasAny = true;
+    const destLabel = e.dest==='budget'||!e.dest ? '→ Budget' : `→ ${e.dest.startsWith('bank:')?loadBanks()[parseInt(e.dest.split(':')[1])]?.bank||'Savings':'Budget'}`;
     html += `<div class="cat-row">
       <div class="cat-icon" style="background:rgba(0,212,170,0.1);color:#00a888">💰</div>
       <div class="cat-info">
         <div class="cat-name">Earning — ${e.source||'Income'}</div>
-        <div class="cat-sub">${e.note||'—'}</div>
+        <div class="cat-sub">${e.note||'—'} · ${destLabel}</div>
       </div>
       <div style="display:flex;align-items:center;gap:5px">
         <div class="cat-amount" style="color:var(--accent3)">+৳${fmt(e.amount)}</div>
+        <button onclick="openEditEarning('${key}',${i})" style="border:none;background:var(--surface3);color:var(--text2);font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;cursor:pointer;font-family:'DM Sans',sans-serif">Edit</button>
         <button onclick="deleteEarning('${key}',${i})" style="border:none;background:rgba(233,69,96,0.1);color:var(--accent);font-size:16px;line-height:1;width:26px;height:26px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center">×</button>
       </div>
     </div>`;
@@ -1546,10 +1685,23 @@ function renderDebts() {
 function markLoanPaid(dateKey, idx) {
   const data = loadData();
   if(data[dateKey]?.loan?.[idx]) {
-    data[dateKey].loan[idx].paid = true;
+    const loan = data[dateKey].loan[idx];
+    loan.paid = true;
+    // Add as expense on today's date
+    const tk = todayKey();
+    if(!data[tk]) data[tk] = {};
+    if(!data[tk].extra) data[tk].extra = [];
+    data[tk].extra.push({
+      amount: loan.amount,
+      person: `Loan paid to: ${loan.person||'Unknown'}`,
+      note: `Loan repayment (original: ${dateKey})`,
+      currency: 'BDT',
+      ts: Date.now()
+    });
     saveData(data);
     renderDebts();
-    showToast('Loan marked as paid! ✓');
+    renderToday();
+    showToast('Loan paid — added to today\'s expenses ✓');
   }
 }
 
@@ -1745,12 +1897,11 @@ function openEditModal(key, catId, idx) {
   const cat = CATS.find(c=>c.id===catId);
   editCtx = { key, catId, idx };
 
-  document.getElementById('editModalTitle').textContent = `Edit ${cat.label} Entry`;
+  document.getElementById('editModalTitle').textContent = `Edit ${cat?.label||'Entry'}`;
 
-  let body = `
-    <div class="field"><label>Amount</label><input type="number" id="em-amount" value="${e.amount}" inputmode="decimal"></div>`;
+  let body = `<div class="field"><label>Amount</label><input type="number" id="em-amount" value="${e.amount}" inputmode="decimal"></div>`;
 
-  if(['loan','borrow','lend'].includes(catId)) {
+  if(['loan','lend'].includes(catId)) {
     body += `<div class="field"><label>Person</label><input type="text" id="em-person" value="${e.person||''}"></div>`;
   }
   if(catId==='extra') {
@@ -1770,9 +1921,15 @@ function openEditModal(key, catId, idx) {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg>
       </div>
       <label onclick="toggleCheck(document.getElementById('em-countLoan'))">Count in expense total</label>
+    </div>
+    <div class="check-row">
+      <div class="custom-check${e.paid?' checked':''}" id="em-paid" onclick="toggleCheck(this)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg>
+      </div>
+      <label onclick="toggleCheck(document.getElementById('em-paid'))">Mark as paid</label>
     </div>`;
   }
-  if(catId==='borrow') {
+  if(catId==='lend') {
     body += `<div class="check-row">
       <div class="custom-check${e.returned?' checked':''}" id="em-returned" onclick="toggleCheck(this)">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg>
@@ -1792,6 +1949,8 @@ function closeEditModal() {
 
 function saveEdit() {
   if(!editCtx) return;
+  if(editCtx.catId === 'earnings') { saveEditEarning(); return; }
+
   const { key, catId, idx } = editCtx;
   const data = loadData();
   const e = data[key]?.[catId]?.[idx];
@@ -1806,11 +1965,12 @@ function saveEdit() {
   if(document.getElementById('em-currency')) e.currency = document.getElementById('em-currency').value;
   if(document.getElementById('em-countLoan')) e.countLoan = document.getElementById('em-countLoan').classList.contains('checked');
   if(document.getElementById('em-returned')) e.returned = document.getElementById('em-returned').classList.contains('checked');
+  if(document.getElementById('em-paid')) e.paid = document.getElementById('em-paid').classList.contains('checked');
 
   saveData(data);
   closeEditModal();
   showToast('Entry updated ✓');
-  renderAddPage();
+  renderAllTodayEntries();
   renderToday();
 }
 
@@ -2007,6 +2167,60 @@ function closeEomModals() {
   document.getElementById('eomSurplusModal').classList.add('hidden');
 }
 
+function remindLater() {
+  // Remind again tomorrow — clear only the day lock, not the month lock
+  const tomorrow = new Date(today());
+  tomorrow.setDate(tomorrow.getDate()+1);
+  localStorage.setItem('eom-remind-after', tomorrow.toISOString().split('T')[0]);
+  closeEomModals();
+  showToast('Will remind you tomorrow');
+}
+
+function checkEndOfMonth() {
+  const now = today();
+  const settings = loadSettings();
+  const monthKey = `${now.getFullYear()}-${now.getMonth()}`;
+  const pocketAmt = settings.pocketMoney?.[monthKey];
+  if(!pocketAmt) return;
+
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const dom = now.getDate();
+  const eomKey = `eom-${monthKey}`;
+  if(dom < daysInMonth-2) return;
+  if(localStorage.getItem(eomKey)) return;
+
+  // Check remind-after date
+  const remindAfter = localStorage.getItem('eom-remind-after');
+  if(remindAfter && todayKey() < remindAfter) return;
+
+  const data = loadData();
+  const mk = getMonthKeys(now.getFullYear(), now.getMonth());
+  const spent = getPeriodTotal(data, mk);
+  const balance = pocketAmt - spent;
+  const banks = loadBanks();
+  const bankOptions = banks.length
+    ? banks.map((b,i)=>`<option value="${i}">${b.bank} (৳${fmt(b.balance||0)})</option>`).join('')
+    : '<option value="">No accounts — add one in Savings</option>';
+
+  if(balance < 0) {
+    document.getElementById('eomDeficitSub').innerHTML =
+      `You spent <strong>৳${fmt(spent)}</strong> on a budget of <strong>৳${fmt(pocketAmt)}</strong>.<br>Deficit: <strong style="color:var(--accent)">৳${fmt(Math.abs(balance))}</strong><br>Which account will cover this?`;
+    document.getElementById('eomDeficitAmt').textContent = fmt(Math.abs(balance));
+    document.getElementById('eomDeficitAccount').innerHTML = bankOptions;
+    document.getElementById('eomDeficitModal').classList.remove('hidden');
+  } else if(balance > 0) {
+    document.getElementById('eomSurplusSub').innerHTML =
+      `Budget: <strong>৳${fmt(pocketAmt)}</strong>, Spent: <strong>৳${fmt(spent)}</strong><br>Surplus: <strong style="color:var(--accent3)">৳${fmt(balance)}</strong> — what would you like to do?`;
+    document.getElementById('eomSurplusAmt').textContent = fmt(balance);
+    document.getElementById('eomSurplusAccount').innerHTML = bankOptions;
+    document.getElementById('eomSurplusModal').classList.remove('hidden');
+  }
+
+  window._eomMonthKey = monthKey;
+  window._eomBalance = balance;
+  window._eomKey = eomKey;
+}
+
 function confirmDeficitDeduction() {
   const idx = parseInt(document.getElementById('eomDeficitAccount').value);
   const banks = loadBanks();
@@ -2014,7 +2228,6 @@ function confirmDeficitDeduction() {
   if(!isNaN(idx) && banks[idx]) {
     banks[idx].balance = Math.max(0, Number(banks[idx].balance||0) - deficit);
     saveBanks(banks);
-    // Log in savings history
     const hist = loadSavingsHistory();
     hist.push({ amount: -deficit, bank: banks[idx].bank, note: 'EOM deficit deduction', ts: Date.now() });
     saveSavingsHistory(hist);
@@ -2034,10 +2247,24 @@ function confirmSurplusDeposit() {
     const hist = loadSavingsHistory();
     hist.push({ amount: surplus, bank: banks[idx].bank, note: 'EOM surplus saved', ts: Date.now() });
     saveSavingsHistory(hist);
-    showToast(`৳${fmt(surplus)} added to ${banks[idx].bank}! 🎉`);
+    showToast(`৳${fmt(surplus)} moved to ${banks[idx].bank}! 🎉`);
   }
   localStorage.setItem(window._eomKey, '1');
   closeEomModals();
+}
+
+function keepSurplusForNextMonth() {
+  const surplus = Math.abs(window._eomBalance||0);
+  // Add surplus as extra budget to next month
+  const now = today();
+  const nextMonthKey = `${now.getMonth()===11?now.getFullYear()+1:now.getFullYear()}-${(now.getMonth()+1)%12}`;
+  const settings = loadSettings();
+  if(!settings.budgetBonus) settings.budgetBonus = {};
+  settings.budgetBonus[nextMonthKey] = (settings.budgetBonus[nextMonthKey]||0) + surplus;
+  saveSettings(settings);
+  localStorage.setItem(window._eomKey, '1');
+  closeEomModals();
+  showToast(`৳${fmt(surplus)} added to next month's budget! 🎉`);
 }
 
 function depositSavings() {
