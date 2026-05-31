@@ -119,12 +119,6 @@ Tap the **export icon (📄)** in the top-right to download an `.xlsx` file with
 
 ---
 
-## 📱 Screenshots
-
-> _Add your own screenshots here after deploying._
-
----
-
 ## 🗺️ Roadmap / Ideas
 
 - [ ] Cloud sync / backup to Google Drive
